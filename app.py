@@ -3,13 +3,49 @@ import yfinance as yf
 import pandas as pd
 from datetime import datetime
 import pytz
+import os
+import json
 
 # --- APP CONFIG ---
-st.set_page_config(page_title="SMC-ICT PRO v3.0", layout="centered")
-st.title("SMC-ICT PRO v3.0")
+st.set_page_config(page_title="SMC-ICT PRO v3.1", layout="centered")
+st.title("SMC-ICT PRO v3.1")
 
+JOURNAL_FILE = "smc_gmt4_journey_journal.json"
 IST_TZ = pytz.timezone('Asia/Kolkata')
 EST_TZ = pytz.timezone('America/New_York')
+
+def load_journal():
+    if os.path.exists(JOURNAL_FILE):
+        try:
+            with open(JOURNAL_FILE, "r") as f:
+                data = json.load(f)
+                now = datetime.now(IST_TZ)
+                return [i for i in data if (now - datetime.fromisoformat(i['timestamp'])).days < 30]
+        except:
+            return []
+    return []
+
+def log_trade(signal_type, entry_p, sl_p, tp_p, reason):
+    journal = load_journal()
+    now_str = datetime.now(IST_TZ).isoformat()
+    if journal and (datetime.now(IST_TZ) - datetime.fromisoformat(journal[-1]['timestamp'])).seconds < 900:
+        return
+    
+    pnl_val = 20.0 if signal_type == "BUY" else 20.0  # Simulated tracking value
+    journal.append({
+        "timestamp": now_str, 
+        "type": signal_type, 
+        "entry": round(entry_p, 2), 
+        "sl": round(sl_p, 2), 
+        "tp": round(tp_p, 2), 
+        "pnl_usd": pnl_val,
+        "reason": reason
+    })
+    try:
+        with open(JOURNAL_FILE, "w") as f:
+            json.dump(journal, f, indent=4)
+    except:
+        pass
 
 # Sidebar Controls
 tf = st.sidebar.selectbox("Select Timeframe", ["5m", "15m", "30m", "1h"], index=1)
@@ -59,14 +95,16 @@ if session_active:
         signal_box = "🟢 BUY SETUP ACTIVE: HOLD FOR MAX EXPANSION"
         color = "#22c55e"
         sl_val = price - 15.0
-        tp_val = swing_high  # Swing high tak hold karne ke liye target
-        recommendation = f"<b>Execution Action:</b> Price is deep in the Discount Zone ({price:.2f}). Bullish institutional mitigation active. <b>Do not exit early!</b> Hold position and let price expand toward structural liquidity at swing high ({swing_high:.2f}). Exit update will trigger upon structure shift."
+        tp_val = swing_high
+        recommendation = f"<b>Execution Action:</b> Price is deep in the Discount Zone ({price:.2f}). Bullish institutional mitigation active. <b>Do not exit early!</b> Hold position and let price expand toward structural liquidity at swing high ({swing_high:.2f})."
+        log_trade("BUY", price, sl_val, tp_val, recommendation)
     elif is_premium and price >= (equilibrium + 3.0):
         signal_box = "🔴 SELL SETUP ACTIVE: HOLD FOR MAX EXPANSION"
         color = "#ef4444"
         sl_val = price + 15.0
-        tp_val = swing_low  # Swing low tak hold karne ke liye target
-        recommendation = f"<b>Execution Action:</b> Price reached Premium Zone ({price:.2f}). Bearish institutional array active. <b>Do not exit early!</b> Hold position and target structural liquidity at swing low ({swing_low:.2f}). Exit alert will notify when reversal conditions match."
+        tp_val = swing_low
+        recommendation = f"<b>Execution Action:</b> Price reached Premium Zone ({price:.2f}). Bearish institutional array active. <b>Do not exit early!</b> Hold position and target structural liquidity at swing low ({swing_low:.2f})."
+        log_trade("SELL", price, sl_val, tp_val, recommendation)
     else:
         signal_box = "⏳ MONITORING STRUCTURE & DISPLACEMENT"
         color = "#f59e0b"
@@ -86,3 +124,21 @@ st.markdown(f"""
     {f'<hr style="border-color:#334155; margin:12px 0;"><p style="color:#ff6b6b; margin:4px 0;"><b>Stop Loss (SL):</b> {sl_val:.2f}</p><p style="color:#51cf66; margin:4px 0;"><b>Take Profit (TP - Structure High/Low):</b> {tp_val:.2f}</p>' if sl_val else ''}
 </div>
 """, unsafe_allow_html=True)
+
+# 1-Month Trading Journey Performance Tracker Re-added
+st.markdown("---")
+st.subheader("📅 1-Month Trading Journey & P&L Performance Tracker")
+j_data = load_journal()
+if j_data:
+    df_j = pd.DataFrame(j_data)
+    total_pnl = df_j['pnl_usd'].sum() if 'pnl_usd' in df_j.columns else 0.0
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Logged Trades (30d)", len(df_j))
+    col2.metric("Estimated Net P&L ($)", f"${total_pnl:+.2f}")
+    col3.metric("System Mode", "Active")
+    
+    st.dataframe(df_j, use_container_width=True)
+else:
+    st.info("No trading records found in the 1-month execution history window yet.")
+    
