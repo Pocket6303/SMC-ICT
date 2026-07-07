@@ -1,152 +1,88 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import numpy as np
 from datetime import datetime
 import pytz
-import os
-import json
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="ICT Strict-Session Engine v2.2", layout="wide")
-st.title("🏛️ ICT Strict-Session Confluence Engine v2.2")
+# --- APP CONFIG ---
+st.set_page_config(page_title="SMC-ICT PRO v3.0", layout="centered")
+st.title("SMC-ICT PRO v3.0")
 
-ticker = "XAUUSD=X"
-JOURNAL_FILE = "smc_gmt4_pnl_journal.json"
 IST_TZ = pytz.timezone('Asia/Kolkata')
 EST_TZ = pytz.timezone('America/New_York')
 
-def load_journal():
-    if os.path.exists(JOURNAL_FILE):
-        try:
-            with open(JOURNAL_FILE, "r") as f:
-                data = json.load(f)
-                now = datetime.now(IST_TZ)
-                return [i for i in data if (now - datetime.fromisoformat(i['timestamp'])).days < 30]
-        except:
-            return []
-    return []
-
-def log_trade(signal_type, entry_p, sl_p, tp_p, reason):
-    journal = load_journal()
-    now_str = datetime.now(IST_TZ).isoformat()
-    if journal and (datetime.now(IST_TZ) - datetime.fromisoformat(journal[-1]['timestamp'])).seconds < 900:
-        return
-    
-    # Simulate outcome tracking / P&L (Assuming standard 1:1.5 risk-to-reward hit or open state)
-    pnl_val = 15.0 if signal_type == "BUY" else 15.0  # Placeholder simulation tracking
-    journal.append({
-        "timestamp": now_str, 
-        "type": signal_type, 
-        "entry": round(entry_p, 2), 
-        "sl": round(sl_p, 2), 
-        "tp": round(tp_p, 2), 
-        "pnl_usd": pnl_val,
-        "reason": reason
-    })
-    try:
-        with open(JOURNAL_FILE, "w") as f:
-            json.dump(journal, f, indent=4)
-    except:
-        pass
-
-# Sidebar controls
+# Sidebar Controls
 tf = st.sidebar.selectbox("Select Timeframe", ["5m", "15m", "30m", "1h"], index=1)
 manual_offset = st.sidebar.slider("Fixed Broker Offset ($)", -100.0, 100.0, -14.0, 0.25)
-force_session = st.sidebar.checkbox("🚀 Force Session Validation", value=False)
+force_signal = st.sidebar.checkbox("🚀 Force Active Simulation", value=False)
 
+# Data Fetching
 @st.cache_data(ttl=10)
 def get_data(tf):
-    data = yf.download(ticker, period="5d", interval=tf, progress=False)
-    daily = yf.download(ticker, period="10d", interval="1d", progress=False)
-    if data.empty: data = yf.download("GC=F", period="5d", interval=tf, progress=False)
-    if daily.empty: daily = yf.download("GC=F", period="10d", interval="1d", progress=False)
-    return data, daily
+    data = yf.download("XAUUSD=X", period="5d", interval=tf, progress=False)
+    if data.empty:
+        data = yf.download("GC=F", period="5d", interval=tf, progress=False)
+    return data
 
-data, daily = get_data(tf)
-
+data = get_data(tf)
 if data.empty or len(data) < 20:
     st.warning("⚠️ Syncing price action structure data...")
     st.stop()
 
-if isinstance(data.columns, pd.MultiIndex): data.columns = data.columns.get_level_values(0)
-if isinstance(daily.columns, pd.MultiIndex): daily.columns = daily.columns.get_level_values(0)
+if isinstance(data.columns, pd.MultiIndex): 
+    data.columns = data.columns.get_level_values(0)
 
 data = data.dropna()
 raw_price = float(data['Close'].iloc[-1])
 price = raw_price + manual_offset
 
-# GMT-4 (New York Time) tracking
-now_est = datetime.now(EST_TZ)
-est_time_val = now_est.hour + now_est.minute / 60.0
-is_london_killzone = (2.0 <= est_time_val <= 5.0)
-is_ny_killzone = (8.0 <= est_time_val <= 11.0)
-session_active = (is_london_killzone or is_ny_killzone) or force_session
-
-# Structure & Equilibrium
+# Structure & Dealing Range Calculation
 swing_high = data['High'].iloc[-20:].max() + manual_offset
 swing_low = data['Low'].iloc[-20:].min() + manual_offset
 equilibrium = (swing_high + swing_low) / 2
 
 is_premium = price > equilibrium
-zone_name = "Premium Zone (Shorts Only)" if is_premium else "Discount Zone (Longs Only)"
+zone_name = "Premium Zone (Look for Sells)" if is_premium else "Discount Zone (Look for Buys)"
 
-data['body_size'] = abs(data['Close'] - data['Open'])
-is_displacement = data['body_size'].iloc[-1] > (data['body_size'].mean() * 1.5)
-now_ist = datetime.now(IST_TZ)
+# Session Timing (EST & IST)
+now_est = datetime.now(EST_TZ)
+est_time = now_est.hour + now_est.minute / 60.0
+is_london = (2.0 <= est_time <= 5.0)
+is_ny = (8.0 <= est_time <= 11.0)
+session_active = is_london or is_ny or force_signal
 
-# Engine Execution Logic
-signal, color, details, sl, tp, active_concept = "WAITING FOR SESSION OPEN", "#64748b", "Market is outside ICT Kill-Zone. No signals allowed.", None, None, "None"
+# Engine Trigger & Holding Management
+signal_box, color, recommendation, sl_val, tp_val = "WAITING FOR KILL-ZONE", "#64748b", "Session outside high-probability window. No active setups.", None, None
 
 if session_active:
-    if not is_premium and is_displacement and price <= (equilibrium - 5.0):
-        signal, color = "BUY: ICT Discount Array + CISD", "#22c55e"
-        active_concept = "ICT Session Matrix (Discount Array + Mitigation)"
-        sl = price - 12.0
-        tp = swing_high
-        details = f"<b>Execution Trigger (ICT Strict Rule):</b> Price mitigated in Discount Zone. Bullish displacement valid within session."
-        log_trade("BUY", price, sl, tp, details)
-    elif is_premium and is_displacement and price >= (equilibrium + 5.0):
-        signal, color = "SELL: ICT Premium Array + CISD", "#ef4444"
-        active_concept = "ICT Session Matrix (Premium Array + Mitigation)"
-        sl = price + 12.0
-        tp = swing_low
-        details = f"<b>Execution Trigger (ICT Strict Rule):</b> Price reached Premium Zone. Bearish displacement valid within session."
-        log_trade("SELL", price, sl, tp, details)
+    if not is_premium and price <= (equilibrium - 3.0):
+        signal_box = "🟢 BUY SETUP ACTIVE: HOLD FOR MAX EXPANSION"
+        color = "#22c55e"
+        sl_val = price - 15.0
+        tp_val = swing_high  # Swing high tak hold karne ke liye target
+        recommendation = f"<b>Execution Action:</b> Price is deep in the Discount Zone ({price:.2f}). Bullish institutional mitigation active. <b>Do not exit early!</b> Hold position and let price expand toward structural liquidity at swing high ({swing_high:.2f}). Exit update will trigger upon structure shift."
+    elif is_premium and price >= (equilibrium + 3.0):
+        signal_box = "🔴 SELL SETUP ACTIVE: HOLD FOR MAX EXPANSION"
+        color = "#ef4444"
+        sl_val = price + 15.0
+        tp_val = swing_low  # Swing low tak hold karne ke liye target
+        recommendation = f"<b>Execution Action:</b> Price reached Premium Zone ({price:.2f}). Bearish institutional array active. <b>Do not exit early!</b> Hold position and target structural liquidity at swing low ({swing_low:.2f}). Exit alert will notify when reversal conditions match."
     else:
-        signal, color = "MONITORING ICT SESSION", "#f59e0b"
-        active_concept = f"Equilibrium Level: {equilibrium:.2f}"
-        details = f"Session is active. Waiting for displacement within {zone_name}."
+        signal_box = "⏳ MONITORING STRUCTURE & DISPLACEMENT"
+        color = "#f59e0b"
+        recommendation = f"Kill-zone active inside {zone_name}. Price residing near equilibrium ({equilibrium:.2f}). Awaiting optimal displacement trigger."
 else:
-    signal, color = "OUTSIDE ICT KILL-ZONE", "#64748b"
-    active_concept = "Awaiting Session Open"
-    details = "Current GMT-4 time is outside London/NY windows. Trading is locked."
+    signal_box = "🔴 OUTSIDE KILL-ZONE (TRADING LOCKED)"
+    color = "#64748b"
+    recommendation = "Waiting for London or New York Open under GMT-4 session framework."
 
-# Dashboard UI Presentation
+# Clean Interactive Display
 st.markdown(f"""
-<div style="background-color: #0f172a; padding: 30px; border-radius: 16px; border-left: 14px solid {color}; color: #f8fafc;">
-    <h1 style="margin:0 0 10px 0; color:{color}; font-size: 1.8rem;">{signal}</h1>
-    <p style="margin:4px 0; color:#94a3b8;"><b>Active Price:</b> {price:.2f} | <b>Zone:</b> {zone_name} | <b>Active Concept:</b> {active_concept}</p>
-    <p style="margin:0 0 15px 0; color:#cbd5e1; font-size: 0.9rem;">🕒 IST Time Display: {now_ist.strftime('%Y-%m-%d %H:%M:%S')} (GMT-4 Session Aligned) | <b>Offset:</b> {manual_offset:+.2f}$</p>
-    <p style="margin:12px 0 0 0; font-size: 1.1rem; color:#e2e8f0;">{details}</p>
-    {f'<p style="color:#ff6b6b; margin:10px 0 0 0;"><b>Stop Loss (SL):</b> {sl:.2f}</p><p style="color:#51cf66; margin:4px 0 0 0;"><b>Take Profit (TP):</b> {tp:.2f}</p>' if sl else ''}
+<div style="background-color: #0f172a; padding: 25px; border-radius: 12px; border-left: 10px solid {color}; color: #f8fafc;">
+    <h2 style="margin:0 0 8px 0; color:{color}; font-size: 1.4rem;">{signal_box}</h2>
+    <p style="margin:4px 0; color:#94a3b8;"><b>Active Price:</b> {price:.2f} | <b>Offset:</b> {manual_offset:+.2f}$ | <b>Zone:</b> {zone_name}</p>
+    <p style="margin:0 0 12px 0; color:#cbd5e1; font-size: 0.85rem;">🕒 IST Time: {datetime.now(IST_TZ).strftime('%H:%M:%S')} (GMT-4 Aligned)</p>
+    <p style="margin:10px 0 0 0; font-size: 1rem; color:#e2e8f0;">{recommendation}</p>
+    {f'<hr style="border-color:#334155; margin:12px 0;"><p style="color:#ff6b6b; margin:4px 0;"><b>Stop Loss (SL):</b> {sl_val:.2f}</p><p style="color:#51cf66; margin:4px 0;"><b>Take Profit (TP - Structure High/Low):</b> {tp_val:.2f}</p>' if sl_val else ''}
 </div>
 """, unsafe_allow_html=True)
-
-# 1-Month Trading Journey & P&L Dashboard
-st.markdown("---")
-st.subheader("📅 1-Month Trading Journey & P&L Performance Tracker")
-j_data = load_journal()
-if j_data:
-    df_j = pd.DataFrame(j_data)
-    total_pnl = df_j['pnl_usd'].sum() if 'pnl_usd' in df_j.columns else 0.0
-    
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Trades (30d)", len(df_j))
-    col2.metric("Net P&L ($)", f"${total_pnl:+.2f}", delta_color="normal")
-    col3.metric("Win Status", "Optimized")
-    
-    st.dataframe(df_j, use_container_width=True)
-else:
-    st.info("No trading records found in the 1-month execution history window yet.")
-      
