@@ -7,88 +7,51 @@ import os
 import json
 
 # --- APP CONFIG ---
-st.set_page_config(page_title="SMC-ICT PRO v4.0", layout="centered")
-st.title("SMC-ICT PRO v4.0")
+st.set_page_config(page_title="SMC-ICT PRO v4.1", layout="centered")
+st.title("SMC-ICT PRO v4.1")
 
-JOURNAL_FILE = "smc_gmt4_journey_journal.json"
-IST_TZ = pytz.timezone('Asia/Kolkata')
-EST_TZ = pytz.timezone('America/New_York')
-
-def load_journal():
-    if os.path.exists(JOURNAL_FILE):
-        try:
-            with open(JOURNAL_FILE, "r") as f:
-                return json.load(f)
-        except: return []
-    return []
-
-def log_trade(signal_type, entry_p, sl_p, tp_p, reason):
-    journal = load_journal()
-    now_str = datetime.now(IST_TZ).isoformat()
-    # Duplicate prevent logic
-    if journal and (datetime.now(IST_TZ) - datetime.fromisoformat(journal[-1]['timestamp'])).seconds < 1800:
-        return
-    journal.append({"timestamp": now_str, "type": signal_type, "entry": round(entry_p, 2), "sl": round(sl_p, 2), "tp": round(tp_p, 2), "reason": reason})
-    with open(JOURNAL_FILE, "w") as f: json.dump(journal, f, indent=4)
+# --- DATA FETCHING (FIXED) ---
+@st.cache_data(ttl=10)
+def get_data(tf):
+    df = yf.download("XAUUSD=X", period="5d", interval=tf, progress=False)
+    if df.empty or 'Close' not in df.columns:
+        df = yf.download("GC=F", period="5d", interval=tf, progress=False)
+    
+    # Fix for MultiIndex columns
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    return df
 
 # Sidebar
 tf = st.sidebar.selectbox("Select Timeframe", ["5m", "15m", "30m", "1h"], index=1)
 manual_offset = st.sidebar.slider("Fixed Broker Offset ($)", -100.0, 100.0, -14.0, 0.25)
 force_signal = st.sidebar.checkbox("🚀 Force Active Simulation", value=False)
 
-# Data Fetching
-@st.cache_data(ttl=10)
-def get_data(tf):
-    data = yf.download("XAUUSD=X", period="5d", interval=tf, progress=False)
-    if data.empty: data = yf.download("GC=F", period="5d", interval=tf, progress=False)
-    return data
-
 data = get_data(tf).dropna()
 if data.empty or len(data) < 20:
-    st.warning("⚠️ Syncing data...")
+    st.warning("⚠️ Syncing data... please wait.")
     st.stop()
 
 # Calculations
 price = float(data['Close'].iloc[-1]) + manual_offset
-swing_high = data['High'].iloc[-20:].max() + manual_offset
-swing_low = data['Low'].iloc[-20:].min() + manual_offset
-equilibrium = (swing_high + swing_low) / 2
 pd_high = data['High'].iloc[-288:].max() + manual_offset
 pd_low = data['Low'].iloc[-288:].min() + manual_offset
 
-# Session Logic
-now_est = datetime.now(EST_TZ)
-est_time = now_est.hour + now_est.minute / 60.0
-is_asian = (20.0 <= est_time <= 24.0) or (0.0 <= est_time <= 0.5)
-is_london = (2.0 <= est_time <= 5.0)
-is_ny = (8.0 <= est_time <= 11.0)
-session_active = is_asian or is_london or is_ny or force_signal
+# Session Logic (EST)
+now_est = datetime.now(pytz.timezone('America/New_York'))
+est_hour = now_est.hour + now_est.minute / 60.0
+session_active = (20.0 <= est_hour <= 24.0) or (0.0 <= est_hour <= 0.5) or (2.0 <= est_hour <= 5.0) or (8.0 <= est_hour <= 11.0) or force_signal
 
-# Strategy Engine
-signal_box, color, recommendation, sl_val, tp_val = "WAITING FOR LIQUIDITY SWEEP", "#64748b", "Monitoring structure...", None, None
-
+# Engine
+signal_box, color = "WAITING FOR LIQUIDITY SWEEP", "#64748b"
 if session_active:
-    if price > pd_high and price > equilibrium:
-        signal_box, color = "📉 SELL SIGNAL: LIQUIDITY SWEEP & MMS", "#ef4444"
-        sl_val, tp_val = price + 15.0, pd_low
-        recommendation = "PDH Swept + MMS confirmed. Entry at POI Retest."
-        log_trade("SELL", price, sl_val, tp_val, recommendation)
-    elif price < pd_low and price < equilibrium:
-        signal_box, color = "📈 BUY SIGNAL: LIQUIDITY SWEEP & MMS", "#22c55e"
-        sl_val, tp_val = price - 15.0, pd_high
-        recommendation = "PDL Swept + MMS confirmed. Entry at POI Retest."
-        log_trade("BUY", price, sl_val, tp_val, recommendation)
+    if price > pd_high:
+        signal_box, color = "📉 SELL SIGNAL: SWEEP DETECTED", "#ef4444"
+    elif price < pd_low:
+        signal_box, color = "📈 BUY SIGNAL: SWEEP DETECTED", "#22c55e"
 
 # UI Display
 st.markdown(f"""<div style="background-color: #0f172a; padding: 20px; border-radius: 10px; border-left: 10px solid {color};">
     <h2 style="color:{color};">{signal_box}</h2>
-    <p><b>Price:</b> {price:.2f} | <b>Offset:</b> {manual_offset}</p>
-    <p>{recommendation}</p>
+    <p><b>Current Price:</b> {price:.2f}</p>
 </div>""", unsafe_allow_html=True)
-
-# Performance Tracker
-st.subheader("📅 Trading Journey & History")
-j_data = load_journal()
-if j_data:
-    st.dataframe(pd.DataFrame(j_data), use_container_width=True)
-    
