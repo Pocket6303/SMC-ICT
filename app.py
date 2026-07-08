@@ -7,8 +7,8 @@ import os
 import json
 
 # --- APP CONFIG ---
-st.set_page_config(page_title="SMC-ICT PRO v7.0", layout="centered")
-st.title("SMC-ICT PRO v7.0")
+st.set_page_config(page_title="SMC-ICT PRO v8.0", layout="centered")
+st.title("SMC-ICT PRO v8.0")
 
 JOURNAL_FILE = "smc_gmt4_journey_journal.json"
 IST_TZ = pytz.timezone('Asia/Kolkata')
@@ -90,30 +90,31 @@ pd_low = float(data['Low'].iloc[-288:].min()) + manual_offset if len(data) >= 28
 session_high = swing_high
 session_low = swing_low
 
-# Sweep Detection (Both PDH/PDL and Session High/Low Sweep)
+# Sweep Detection
 swept_high_liquidity = (price > pd_high) or (price > session_high)
 swept_low_liquidity = (price < pd_low) or (price < session_low)
 
-# Session Timing (EST & IST)
+# Session Timing Fix (EST Aligned: Asian, London, New York)
 now_est = datetime.now(EST_TZ)
 est_time = now_est.hour + now_est.minute / 60.0
-is_asian = (20.0 <= est_time <= 24.0) or (0.0 <= est_time <= 0.5)
-is_london = (2.0 <= est_time <= 5.0)
-is_ny = (8.0 <= est_time <= 11.0)
+# Expanded valid trading session boundaries in EST
+is_asian = (19.5 <= est_time <= 24.0) or (0.0 <= est_time <= 2.0)
+is_london = (2.0 <= est_time <= 6.0)
+is_ny = (7.5 <= est_time <= 12.5)
 session_active = is_asian or is_london or is_ny or force_signal
 
-# Engine Trigger & Strategy Logic with Liquidity Filters
+# Engine Trigger & Strategy Logic
 signal_box, color, recommendation, sl_val, tp_val = "WAITING FOR LIQUIDITY SWEEP & SETUP", "#64748b", "Monitoring structure across active sessions.", None, None
 
 if session_active:
-    if swept_high_liquidity and is_premium and price >= (equilibrium + 3.0):
+    if swept_high_liquidity and is_premium and price >= (equilibrium + 2.0):
         signal_box = "📉 SELL SIGNAL: LIQUIDITY SWEEP (PDH/SESSION HIGH) & MMS"
         color = "#ef4444"
         sl_val = price + 15.0
         tp_val = session_low
         recommendation = f"<b>Execution Action:</b> Liquidity sweep at High detected in Premium Zone ({price:.2f}). Market Structure Shift (MMS) active. <b>Do not exit early!</b> Hold position targeting structural target at session low ({session_low:.2f})."
         log_trade("SELL", price, sl_val, tp_val, recommendation)
-    elif swept_low_liquidity and not is_premium and price <= (equilibrium - 3.0):
+    elif swept_low_liquidity and not is_premium and price <= (equilibrium - 2.0):
         signal_box = "📈 BUY SIGNAL: LIQUIDITY SWEEP (PDL/SESSION LOW) & MMS"
         color = "#22c55e"
         sl_val = price - 15.0
@@ -125,16 +126,16 @@ if session_active:
         color = "#f59e0b"
         recommendation = f"Session active inside {zone_name}. Awaiting high/low sweep of previous day or session boundaries for last POI entry."
 else:
-    signal_box = "🔴 OUTSIDE ACTIVE SESSIONS (LOCKED)"
+    signal_box = "🔴 OUTSIDE ACTIVE KILL-ZONE (TRADING LOCKED)"
     color = "#64748b"
-    recommendation = "Waiting for Asian, London, or New York session framework."
+    recommendation = "Waiting for Asian, London, or New York Open under GMT-4 session framework."
 
 # Display UI
 st.markdown(f"""
 <div style="background-color: #0f172a; padding: 25px; border-radius: 12px; border-left: 10px solid {color}; color: #f8fafc;">
     <h2 style="margin:0 0 8px 0; color:{color}; font-size: 1.4rem;">{signal_box}</h2>
     <p style="margin:4px 0; color:#94a3b8;"><b>Active Price:</b> {price:.2f} | <b>Offset:</b> {manual_offset:+.2f}$ | <b>Zone:</b> {zone_name}</p>
-    <p style="margin:0 0 12px 0; color:#cbd5e1; font-size: 0.85rem;">🕒 IST Time: {datetime.now(IST_TZ).strftime('%H:%M:%S')} (GMT-4 Aligned)</p>
+    <p style="margin:0 0 12px 0; color:#cbd5e1; font-size: 0.85rem;">🕒 IST Time: {datetime.now(IST_TZ).strftime('%H:%M:%S')} (EST/GMT-4 Aligned)</p>
     <p style="margin:10px 0 0 0; font-size: 1rem; color:#e2e8f0;">{recommendation}</p>
     {f'<hr style="border-color:#334155; margin:12px 0;"><p style="color:#ff6b6b; margin:4px 0;"><b>Stop Loss (SL):</b> {sl_val:.2f}</p><p style="color:#51cf66; margin:4px 0;"><b>Take Profit (TP):</b> {tp_val:.2f}</p>' if sl_val else ''}
 </div>
@@ -171,4 +172,3 @@ if j_data:
     st.dataframe(df_j, use_container_width=True)
 else:
     st.info("No trading records found in the 1-month execution history window yet.")
-    
