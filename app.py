@@ -7,8 +7,8 @@ import os
 import json
 
 # --- APP CONFIG ---
-st.set_page_config(page_title="SMC-ICT PRO v8.0", layout="centered")
-st.title("SMC-ICT PRO v8.0")
+st.set_page_config(page_title="SMC-ICT PRO v9.0", layout="centered")
+st.title("SMC-ICT PRO v9.0")
 
 JOURNAL_FILE = "smc_gmt4_journey_journal.json"
 IST_TZ = pytz.timezone('Asia/Kolkata')
@@ -48,7 +48,7 @@ def log_trade(signal_type, entry_p, sl_p, tp_p, reason):
         pass
 
 # Sidebar Controls
-tf = st.sidebar.selectbox("Select Timeframe", ["5m", "15m", "30m", "1h"], index=1)
+tf = st.sidebar.selectbox("Select Timeframe", ["5m", "15m", "30m", "1h"], index=0)
 manual_offset = st.sidebar.slider("Fixed Broker Offset ($)", -100.0, 100.0, -14.0, 0.25)
 force_signal = st.sidebar.checkbox("🚀 Force Active Simulation", value=False)
 
@@ -84,51 +84,55 @@ equilibrium = (swing_high + swing_low) / 2
 is_premium = price > equilibrium
 zone_name = "Premium Zone (Look for Sells)" if is_premium else "Discount Zone (Look for Buys)"
 
-# Liquidity Reference: Previous Day & Current Session High/Low
+# Liquidity Reference
 pd_high = float(data['High'].iloc[-288:].max()) + manual_offset if len(data) >= 288 else swing_high
 pd_low = float(data['Low'].iloc[-288:].min()) + manual_offset if len(data) >= 288 else swing_low
 session_high = swing_high
 session_low = swing_low
 
-# Sweep Detection
 swept_high_liquidity = (price > pd_high) or (price > session_high)
 swept_low_liquidity = (price < pd_low) or (price < session_low)
 
-# Session Timing Fix (EST Aligned: Asian, London, New York)
+# MSS Double Confirmation Calculation (Recent displacement check)
+recent_body_diff = float(data['Close'].iloc[-1] - data['Open'].iloc[-1])
+prev_body_diff = float(data['Close'].iloc[-2] - data['Open'].iloc[-2])
+bullish_mss_detected = (recent_body_diff > 0 and prev_body_diff > 0 and (data['Close'].iloc[-1] > data['High'].iloc[-5:-1].max()))
+bearish_mss_detected = (recent_body_diff < 0 and prev_body_diff < 0 and (data['Close'].iloc[-1] < data['Low'].iloc[-5:-1].min()))
+
+# Session Timing Fix
 now_est = datetime.now(EST_TZ)
 est_time = now_est.hour + now_est.minute / 60.0
-# Expanded valid trading session boundaries in EST
 is_asian = (19.5 <= est_time <= 24.0) or (0.0 <= est_time <= 2.0)
 is_london = (2.0 <= est_time <= 6.0)
-is_ny = (7.5 <= est_time <= 12.5)
+is_ny = (7.5 <= est_time <= 12.5) or (12.5 < est_time <= 16.0)  # Extended to include afternoon session overlap
 session_active = is_asian or is_london or is_ny or force_signal
 
-# Engine Trigger & Strategy Logic
-signal_box, color, recommendation, sl_val, tp_val = "WAITING FOR LIQUIDITY SWEEP & SETUP", "#64748b", "Monitoring structure across active sessions.", None, None
+# Engine Trigger & Strategy Logic with Double Confirmation (Sweep + MSS)
+signal_box, color, recommendation, sl_val, tp_val = "WAITING FOR LIQUIDITY SWEEP & SETUP", "#64748b", "Monitoring structure and MSS displacement...", None, None
 
 if session_active:
-    if swept_high_liquidity and is_premium and price >= (equilibrium + 2.0):
-        signal_box = "📉 SELL SIGNAL: LIQUIDITY SWEEP (PDH/SESSION HIGH) & MMS"
+    if swept_high_liquidity and is_premium and (bearish_mss_detected or force_signal):
+        signal_box = "📉 SELL SIGNAL: SWEEP + BEARISH MSS CONFIRMED"
         color = "#ef4444"
         sl_val = price + 15.0
         tp_val = session_low
-        recommendation = f"<b>Execution Action:</b> Liquidity sweep at High detected in Premium Zone ({price:.2f}). Market Structure Shift (MMS) active. <b>Do not exit early!</b> Hold position targeting structural target at session low ({session_low:.2f})."
+        recommendation = f"<b>Execution Action:</b> High liquidity sweep + structural shift (MSS) verified in Premium Zone ({price:.2f}). Targeting session low ({session_low:.2f})."
         log_trade("SELL", price, sl_val, tp_val, recommendation)
-    elif swept_low_liquidity and not is_premium and price <= (equilibrium - 2.0):
-        signal_box = "📈 BUY SIGNAL: LIQUIDITY SWEEP (PDL/SESSION LOW) & MMS"
+    elif swept_low_liquidity and not is_premium and (bullish_mss_detected or force_signal):
+        signal_box = "📈 BUY SIGNAL: SWEEP + BULLISH MSS CONFIRMED"
         color = "#22c55e"
         sl_val = price - 15.0
         tp_val = session_high
-        recommendation = f"<b>Execution Action:</b> Liquidity sweep at Low detected in Discount Zone ({price:.2f}). Market Structure Shift (MMS) active. <b>Do not exit early!</b> Hold position targeting structural target at session high ({session_high:.2f})."
+        recommendation = f"<b>Execution Action:</b> Low liquidity sweep + structural shift (MSS) verified in Discount Zone ({price:.2f}). Targeting session high ({session_high:.2f})."
         log_trade("BUY", price, sl_val, tp_val, recommendation)
     else:
-        signal_box = "⏳ MONITORING LIQUIDITY & POI RETEST"
+        signal_box = "⏳ MONITORING LIQUIDITY & WAITING FOR MSS"
         color = "#f59e0b"
-        recommendation = f"Session active inside {zone_name}. Awaiting high/low sweep of previous day or session boundaries for last POI entry."
+        recommendation = f"Session active inside {zone_name}. Liquidity status checked; awaiting clear candle displacement (MSS) for high-probability entry."
 else:
     signal_box = "🔴 OUTSIDE ACTIVE KILL-ZONE (TRADING LOCKED)"
     color = "#64748b"
-    recommendation = "Waiting for Asian, London, or New York Open under GMT-4 session framework."
+    recommendation = "Waiting for Asian, London, or New York Session framework."
 
 # Display UI
 st.markdown(f"""
