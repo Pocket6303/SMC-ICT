@@ -7,8 +7,8 @@ import os
 import json
 
 # --- APP CONFIG ---
-st.set_page_config(page_title="SMC-ICT PRO v3.5", layout="centered")
-st.title("SMC-ICT PRO v3.5")
+st.set_page_config(page_title="SMC-ICT PRO v4.0", layout="centered")
+st.title("SMC-ICT PRO v4.0")
 
 JOURNAL_FILE = "smc_gmt4_journey_journal.json"
 IST_TZ = pytz.timezone('Asia/Kolkata')
@@ -18,15 +18,17 @@ def load_journal():
     if os.path.exists(JOURNAL_FILE):
         try:
             with open(JOURNAL_FILE, "r") as f:
-                data = json.load(f)
-                return data
+                return json.load(f)
         except: return []
     return []
 
 def log_trade(signal_type, entry_p, sl_p, tp_p, reason):
     journal = load_journal()
     now_str = datetime.now(IST_TZ).isoformat()
-    journal.append({"timestamp": now_str, "type": signal_type, "entry": round(entry_p, 2), "sl": round(sl_p, 2), "tp": round(tp_p, 2), "reason": reason, "pnl_usd": 20.0})
+    # Duplicate prevent logic
+    if journal and (datetime.now(IST_TZ) - datetime.fromisoformat(journal[-1]['timestamp'])).seconds < 1800:
+        return
+    journal.append({"timestamp": now_str, "type": signal_type, "entry": round(entry_p, 2), "sl": round(sl_p, 2), "tp": round(tp_p, 2), "reason": reason})
     with open(JOURNAL_FILE, "w") as f: json.dump(journal, f, indent=4)
 
 # Sidebar
@@ -38,12 +40,16 @@ force_signal = st.sidebar.checkbox("🚀 Force Active Simulation", value=False)
 @st.cache_data(ttl=10)
 def get_data(tf):
     data = yf.download("XAUUSD=X", period="5d", interval=tf, progress=False)
+    if data.empty: data = yf.download("GC=F", period="5d", interval=tf, progress=False)
     return data
 
 data = get_data(tf).dropna()
-price = float(data['Close'].iloc[-1]) + manual_offset
+if data.empty or len(data) < 20:
+    st.warning("⚠️ Syncing data...")
+    st.stop()
 
 # Calculations
+price = float(data['Close'].iloc[-1]) + manual_offset
 swing_high = data['High'].iloc[-20:].max() + manual_offset
 swing_low = data['Low'].iloc[-20:].min() + manual_offset
 equilibrium = (swing_high + swing_low) / 2
@@ -59,22 +65,18 @@ is_ny = (8.0 <= est_time <= 11.0)
 session_active = is_asian or is_london or is_ny or force_signal
 
 # Strategy Engine
-signal_box, color, recommendation, sl_val, tp_val = "WAITING FOR SETUP", "#64748b", "Monitoring Liquidity & MMS...", None, None
+signal_box, color, recommendation, sl_val, tp_val = "WAITING FOR LIQUIDITY SWEEP", "#64748b", "Monitoring structure...", None, None
 
 if session_active:
-    if price > pd_high and price < equilibrium: # Sell Sweep logic
-        signal_box = "📉 SELL SIGNAL: LIQUIDITY SWEEP & MMS DETECTED"
-        color = "#ef4444"
-        sl_val = price + 15.0
-        tp_val = pd_low
-        recommendation = "High Liquidity Swept + MMS confirmed. Entry at POI Retest."
+    if price > pd_high and price > equilibrium:
+        signal_box, color = "📉 SELL SIGNAL: LIQUIDITY SWEEP & MMS", "#ef4444"
+        sl_val, tp_val = price + 15.0, pd_low
+        recommendation = "PDH Swept + MMS confirmed. Entry at POI Retest."
         log_trade("SELL", price, sl_val, tp_val, recommendation)
-    elif price < pd_low and price > equilibrium: # Buy Sweep logic
-        signal_box = "📈 BUY SIGNAL: LIQUIDITY SWEEP & MMS DETECTED"
-        color = "#22c55e"
-        sl_val = price - 15.0
-        tp_val = pd_high
-        recommendation = "Low Liquidity Swept + MMS confirmed. Entry at POI Retest."
+    elif price < pd_low and price < equilibrium:
+        signal_box, color = "📈 BUY SIGNAL: LIQUIDITY SWEEP & MMS", "#22c55e"
+        sl_val, tp_val = price - 15.0, pd_high
+        recommendation = "PDL Swept + MMS confirmed. Entry at POI Retest."
         log_trade("BUY", price, sl_val, tp_val, recommendation)
 
 # UI Display
@@ -85,9 +87,8 @@ st.markdown(f"""<div style="background-color: #0f172a; padding: 20px; border-rad
 </div>""", unsafe_allow_html=True)
 
 # Performance Tracker
-st.subheader("📅 1-Month Trading Journey")
+st.subheader("📅 Trading Journey & History")
 j_data = load_journal()
 if j_data:
-    df = pd.DataFrame(j_data)
-    st.dataframe(df, use_container_width=True)
-        
+    st.dataframe(pd.DataFrame(j_data), use_container_width=True)
+    
