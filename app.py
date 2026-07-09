@@ -113,38 +113,38 @@ elif force_active or (ema_tap_valid and smc_sell_sweep and price < ema200_val):
     hold_advice = "💎 INSTITUTIONAL RIDE: Don't Exit! Hold & Target Full 1:4 Extension."
     log_trade("SELL", price, sl_val, tp_val, abs(price - sl_val), accuracy)
 
-# --- NATIVE STREAMLIT DASHBOARD CONTAINER (Zero Leakage) ---
-with st.container():
-    if trade_type == "BUY":
-        st.success(signal_box)
-    elif trade_type == "SELL":
-        st.error(signal_box)
-    else:
-        st.warning(signal_box)
-        
-    if alarm_msg:
-        st.error(alarm_msg)
-        
-    c1, c2 = st.columns(2)
-    with c1:
-        st.metric(label="Price (w/ Offset)", value=f"{price:.2f}")
-        st.metric(label="🟢 20 EMA (Green)", value=f"{ema20_val:.2f}")
-    with c2:
-        st.metric(label="ATR Volatility", value=f"{atr_val:.2f}")
-        st.metric(label="🔴 200 EMA (Red)", value=f"{ema200_val:.2f}")
-        
-    st.info(f"**Signal Accuracy:** {accuracy}")
-    
-    if trade_type != 'NONE':
-        st.info(hold_advice)
-        sc1, sc2 = st.columns(2)
-        with sc1:
-            st.error(f"**Stop Loss (SL):** {sl_val:.2f}")
-        with sc2:
-            st.success(f"**Take Profit (TP 1:4 Target):** {tp_val:.2f}")
-            
-    current_time_str = datetime.now(IST_TZ).strftime('%H:%M:%S')
-    st.caption(f"🕒 IST Time: {current_time_str} | Offset Applied: {manual_offset}$ | TF: {tf}")
+# --- CLEAN NATIVE DASHBOARD DISPLAY (Zero HTML Parsing Issues) ---
+if trade_type == "BUY":
+    st.success(f"### {signal_box}")
+elif trade_type == "SELL":
+    st.error(f"### {signal_box}")
+else:
+    st.warning(f"### {signal_box}")
+
+if alarm_msg:
+    st.error(alarm_msg)
+
+st.write("")
+col1, col2 = st.columns(2)
+with col1:
+    st.metric(label="Price (w/ Offset)", value=f"{price:.2f}")
+    st.write(f"🟢 **20 EMA ({tf}):** {ema20_val:.2f}")
+with col2:
+    st.metric(label="ATR Volatility", value=f"{atr_val:.2f}")
+    st.write(f"🔴 **200 EMA ({tf}):** {ema200_val:.2f}")
+
+st.info(f"**Signal Accuracy:** {accuracy}")
+
+if trade_type != 'NONE':
+    st.success(hold_advice)
+    col_sl, col_tp = st.columns(2)
+    with col_sl:
+        st.error(f"**Stop Loss (SL):** {sl_val:.2f}")
+    with col_tp:
+        st.success(f"**Take Profit (TP 1:4 Target):** {tp_val:.2f}")
+
+current_time_str = datetime.now(IST_TZ).strftime('%H:%M:%S')
+st.caption(f"🕒 IST Time: {current_time_str} | Offset Applied: {manual_offset}$ | TF: {tf}")
 
 # --- JOURNAL ---
 st.markdown("---")
@@ -154,3 +154,4 @@ if j_data:
     st.dataframe(pd.DataFrame(j_data), use_container_width=True)
 else:
     st.info("Awaiting higher timeframe SMC/ICT + EMA rejection setup...")
+    
