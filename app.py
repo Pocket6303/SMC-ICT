@@ -9,7 +9,7 @@ import json
 # --- APP CONFIG & VERSION v10.2 ---
 st.set_page_config(page_title="XAUUSD SMC/ICT Master Engine v10.2", layout="centered")
 
-# --- ORIGINAL RICH DARK THEME & INSTITUTIONAL CARD CSS ---
+# --- ORIGINAL CLEAN DARK THEME & CARD CSS ---
 st.markdown("""
 <style>
     .stApp {
@@ -85,8 +85,7 @@ def log_trade(signal_type, entry_p, sl_p, tp_p, risk_pts, acc):
     except:
         pass
 
-# --- SIDEBAR & BROKER OFFSET (-35.0 Default for exact matching) ---
-# Restricted/Optimized for 30m and higher timeframes + standard lower ones
+# --- SIDEBAR & BROKER OFFSET (-35.0 Default) ---
 tf = st.sidebar.selectbox("Select Timeframe", ["30m", "1h", "4h", "15m", "5m"], index=0)
 manual_offset = st.sidebar.slider("Fixed Broker Offset ($)", -200.0, 200.0, -35.0, 0.25)
 force_active = st.sidebar.checkbox("🚀 Force Active v10.2 Confluence Trigger", value=False)
@@ -135,9 +134,6 @@ ema_tap_valid = distance_from_ema20 <= (atr_val * 0.8)
 smc_buy_sweep = price > recent_max
 smc_sell_sweep = price < recent_min
 
-# Active only or strict 30m+ filter logic matching
-is_higher_tf = tf in ["30m", "1h", "4h"]
-
 if force_active or (ema_tap_valid and smc_buy_sweep and price > ema200_val):
     signal_box = f"🚨 v10.2 ALARM: SMC BUY SWEEP + 20 EMA BOUNCE [{tf}] (1:4 RR)"
     box_color = "#22c55e"
@@ -159,7 +155,7 @@ elif force_active or (ema_tap_valid and smc_sell_sweep and price < ema200_val):
     hold_advice = "💎 INSTITUTIONAL RIDE: Don't Exit! Hold & Target Full 1:4 Extension."
     log_trade("SELL", price, sl_val, tp_val, abs(price - sl_val), accuracy)
 
-# --- SECURE INSTITUTIONAL CARD INTERFACE ---
+# --- ORIGINAL SAFE HTML INSTITUTIONAL CARD UI ---
 current_time_str = datetime.now(IST_TZ).strftime('%H:%M:%S')
 
 alarm_section = f'<div class="alarm-box">{alarm_msg}</div>' if alarm_msg else ''
@@ -171,8 +167,8 @@ card_html = f"""
     <h3 style="margin:0 0 10px 0; color:{box_color}; font-size: 1.4rem;">{signal_box}</h3>
     {alarm_section}
     <div style="font-size: 1rem; margin-bottom: 6px;"><b>Price (w/ Offset):</b> {price:.2f} &nbsp;|&nbsp; <b>ATR:</b> {atr_val:.2f}</div>
-    <div style="font-size: 0.95rem; color:#4ade80; margin-bottom: 4px;"><b>🟢 20 EMA (30m+):</b> {ema20_val:.2f}</div>
-    <div style="font-size: 0.95rem; color:#f87171; margin-bottom: 6px;"><b>🔴 200 EMA (30m+):</b> {ema200_val:.2f}</div>
+    <div style="font-size: 0.95rem; color:#4ade80; margin-bottom: 4px;"><b>🟢 20 EMA ({tf}):</b> {ema20_val:.2f}</div>
+    <div style="font-size: 0.95rem; color:#f87171; margin-bottom: 6px;"><b>🔴 200 EMA ({tf}):</b> {ema200_val:.2f}</div>
     <div style="font-size: 0.95rem; color:#38bdf8; margin-bottom: 6px;"><b>Signal Accuracy:</b> {accuracy}</div>
     {hold_section}
     <div style="font-size: 0.85rem; color:#94a3b8; margin-top: 8px;">🕒 IST Time: {current_time_str} &nbsp;|&nbsp; Offset Applied: {manual_offset}$ &nbsp;|&nbsp; TF: {tf}</div>
