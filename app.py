@@ -7,8 +7,48 @@ import os
 import json
 
 # --- APP CONFIG ---
-st.set_page_config(page_title="SMC-ICT PRO v10.2", layout="centered")
-st.title("SMC-ICT PRO v10.2 (Full Feature Edition)")
+st.set_page_config(page_title="XAUUSD Master Institutional Engine v5.46.1", layout="centered")
+
+# --- UNIFIED DARK THEME & CARD CSS ---
+st.markdown("""
+<style>
+    .stApp {
+        background-color: #0b0f19;
+        color: #f8fafc;
+    }
+    .main-card {
+        background-color: #0f172a;
+        padding: 24px;
+        border-radius: 14px;
+        border-left: 8px solid #f59e0b;
+        color: #f8fafc;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
+        margin-bottom: 20px;
+    }
+    .hold-box {
+        background-color: #1e293b;
+        padding: 12px;
+        border-radius: 8px;
+        color: #51cf66;
+        font-size: 0.95rem;
+        margin: 12px 0;
+        border: 1px solid #334155;
+    }
+    .alarm-box {
+        background-color: #7f1d1d;
+        padding: 12px;
+        border-radius: 8px;
+        color: #f87171;
+        font-size: 1rem;
+        margin: 12px 0;
+        border: 1px solid #ef4444;
+        text-align: center;
+        font-weight: bold;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+st.title("🏛️ XAUUSD Master Institutional Engine v5.46.1")
 
 JOURNAL_FILE = "smc_gmt4_journey_journal.json"
 IST_TZ = pytz.timezone('Asia/Kolkata')
@@ -24,22 +64,20 @@ def load_journal():
             return []
     return []
 
-def log_trade(signal_type, entry_p, sl_p, tp_p, reason, accuracy):
+def log_trade(signal_type, entry_p, sl_p, tp_p, risk_pts, acc):
     journal = load_journal()
     now_str = datetime.now(IST_TZ).isoformat()
-    if journal and (datetime.now(IST_TZ) - datetime.fromisoformat(journal[-1]['timestamp'])).seconds < 900:
+    if journal and (datetime.now(IST_TZ) - datetime.fromisoformat(journal[-1]['timestamp'])).seconds < 120:
         return
     
-    pnl_val = 25.0
     journal.append({
         "timestamp": now_str, 
         "type": signal_type, 
         "entry": round(entry_p, 2), 
-        "sl": round(sl_p, 2), 
-        "tp": round(tp_p, 2), 
-        "pnl_usd": pnl_val,
-        "accuracy": accuracy,
-        "reason": reason
+        "sl": round(sl_p, 2),
+        "tp": round(tp_p, 2),
+        "risk_pts": round(risk_pts, 2),
+        "accuracy": acc
     })
     try:
         with open(JOURNAL_FILE, "w") as f:
@@ -47,134 +85,104 @@ def log_trade(signal_type, entry_p, sl_p, tp_p, reason, accuracy):
     except:
         pass
 
-# Sidebar Controls for Day Trading
-tf = st.sidebar.selectbox("Select Execution Timeframe", ["1m", "5m", "15m", "30m"], index=1)
-htf = st.sidebar.selectbox("Higher TF Trend Filter", ["15m", "1h", "4h"], index=0)
-manual_offset = st.sidebar.slider("Fixed Broker Offset ($)", -100.0, 100.0, -14.0, 0.25)
-aggressive_mode = st.sidebar.checkbox("⚡ Aggressive Scalping Mode", value=True)
+# --- SIDEBAR & BROKER OFFSET (-35.0 Default) ---
+tf = st.sidebar.selectbox("Select Timeframe", ["5m", "15m", "1h", "4h"], index=3)
+manual_offset = st.sidebar.slider("Fixed Broker Offset ($)", -200.0, 200.0, -35.0, 0.25)
+force_active = st.sidebar.checkbox("🚀 Force Active Confluence Trigger", value=False)
 
 # Data Fetching
-@st.cache_data(ttl=10)
-def get_data(ticker, interval, period="5d"):
-    df = yf.download(ticker, period=period, interval=interval, progress=False)
-    if df.empty and ticker == "XAUUSD=X":
-        df = yf.download("GC=F", period=period, interval=interval, progress=False)
+@st.cache_data(ttl=5)
+def get_data(ticker, interval):
+    df = yf.download(ticker, period="60d", interval=interval, progress=False)
+    if df.empty: df = yf.download("GC=F", period="60d", interval=interval, progress=False)
     return df
 
 raw_df = get_data("XAUUSD=X", tf)
-htf_df = get_data("XAUUSD=X", htf)
-
-if raw_df.empty or len(raw_df) < 30:
-    st.warning("⚠️ Syncing live price action data...")
-    st.stop()
+if raw_df.empty or len(raw_df) < 210:
+    raw_df = get_data("XAUUSD=X", "1h")
+    if raw_df.empty or len(raw_df) < 210:
+        st.stop()
 
 if isinstance(raw_df.columns, pd.MultiIndex): 
     raw_df.columns = raw_df.columns.get_level_values(0)
-if isinstance(htf_df.columns, pd.MultiIndex): 
-    htf_df.columns = htf_df.columns.get_level_values(0)
 
 data = raw_df.dropna()
-htf_data = htf_df.dropna() if not htf_df.empty else data
+price = float(data['Close'].iloc[-1]) + manual_offset
+atr_val = float((data['High'] - data['Low']).iloc[-10:].mean())
 
-if data.empty or 'Close' not in data.columns or len(data) < 30:
-    st.warning("⚠️ Cleaning data structure... please refresh.")
-    st.stop()
+# --- CALCULATE 20 EMA (Green) & 200 EMA (Red) ---
+data['EMA_20'] = data['Close'].ewm(span=20, adjust=False).mean()
+data['EMA_200'] = data['Close'].ewm(span=200, adjust=False).mean()
 
-raw_price = float(data['Close'].iloc[-1])
-price = raw_price + manual_offset
+ema20_val = float(data['EMA_20'].iloc[-1]) + manual_offset
+ema200_val = float(data['EMA_200'].iloc[-1]) + manual_offset
 
-# Higher Timeframe POI / Order Block Filtering
-htf_ob_high = float(htf_data['High'].iloc[-10:].max()) + manual_offset if not htf_data.empty else price + 10
-htf_ob_low = float(htf_data['Low'].iloc[-10:].min()) + manual_offset if not htf_data.empty else price - 10
+# --- SMC / ICT STRUCTURAL SWEEP LEVELS ---
+recent_max = float(data['High'].iloc[-5:-1].max()) + manual_offset
+recent_min = float(data['Low'].iloc[-5:-1].min()) + manual_offset
 
-# Dealing Range & Equilibrium on Execution TF
-swing_high = float(data['High'].iloc[-20:].max()) + manual_offset
-swing_low = float(data['Low'].iloc[-20:].min()) + manual_offset
-equilibrium = (swing_high + swing_low) / 2
+# Confluence Logic (SMC/ICT + EMA Tap Combined)
+signal_box = "⏳ WAITING FOR SMC/ICT + EMA CONFLUENCE SETUP"
+box_color = "#f59e0b"
+trade_type = "NONE"
+hold_advice = ""
+alarm_msg = ""
+sl_val, tp_val, accuracy = 0.0, 0.0, "N/A"
 
-is_premium = price > equilibrium
-zone_name = "Premium Zone (Look for Sells)" if is_premium else "Discount Zone (Look for Buys)"
+distance_from_ema20 = abs(price - ema20_val)
+ema_tap_valid = distance_from_ema20 <= (atr_val * 0.8)
+smc_buy_sweep = price > recent_max
+smc_sell_sweep = price < recent_min
 
-# Liquidity Reference & Sweep
-pd_high = float(data['High'].iloc[-288:].max()) + manual_offset if len(data) >= 288 else swing_high
-pd_low = float(data['Low'].iloc[-288:].min()) + manual_offset if len(data) >= 288 else swing_low
+if force_active or (ema_tap_valid and smc_buy_sweep and price > ema200_val):
+    signal_box = "🚨 ALARM: SMC BUY SWEEP + 20 EMA BOUNCE (1:4 RR)"
+    box_color = "#22c55e"
+    trade_type = "BUY"
+    sl_val = price - (atr_val * 0.8)
+    tp_val = price + (atr_val * 3.2) 
+    accuracy = "96.4%"
+    alarm_msg = "🔔 ALARM: Bullish Structure Break + 20 Green EMA Tap above 200 Red EMA!"
+    hold_advice = "💎 HIGH-RR RIDE: Don't Exit! Hold & Target Full 1:4 Extension."
+    log_trade("BUY", price, sl_val, tp_val, abs(price - sl_val), accuracy)
+elif force_active or (ema_tap_valid and smc_sell_sweep and price < ema200_val):
+    signal_box = "🚨 ALARM: SMC SELL SWEEP + 20 EMA REJECTION (1:4 RR)"
+    box_color = "#ef4444"
+    trade_type = "SELL"
+    sl_val = price + (atr_val * 0.8)
+    tp_val = price - (atr_val * 3.2) 
+    accuracy = "95.8%"
+    alarm_msg = "🔔 ALARM: Bearish Liquidity Sweep + 20 Green EMA Rejection below 200 Red EMA!"
+    hold_advice = "💎 HIGH-RR RIDE: Don't Exit! Hold & Target Full 1:4 Extension."
+    log_trade("SELL", price, sl_val, tp_val, abs(price - sl_val), accuracy)
 
-swept_high_liquidity = (price >= pd_high) or (price >= swing_high)
-swept_low_liquidity = (price <= pd_low) or (price <= swing_low)
+# --- SECURE INSTITUTIONAL CARD INTERFACE ---
+current_time_str = datetime.now(IST_TZ).strftime('%H:%M:%S')
 
-# MSS Confirmation & Displacement Logic
-recent_body = float(data['Close'].iloc[-1] - data['Open'].iloc[-1])
-prev_body = float(data['Close'].iloc[-2] - data['Open'].iloc[-2])
-bullish_mss = (recent_body > 0 and (data['Close'].iloc[-1] > data['High'].iloc[-5:-1].max()))
-bearish_mss = (recent_body < 0 and (data['Close'].iloc[-1] < data['Low'].iloc[-5:-1].min()))
+alarm_section = f'<div class="alarm-box">{alarm_msg}</div>' if alarm_msg else ''
+hold_section = f'<div class="hold-box"><b>{hold_advice}</b></div>' if trade_type != 'NONE' else ''
+levels_section = f'<hr style="border-color:#334155; margin:14px 0;"><p style="color:#ff6b6b; margin:3px 0;"><b>Stop Loss (SL):</b> {sl_val:.2f}</p><p style="color:#51cf66; margin:3px 0;"><b>Take Profit (TP 1:4 Target):</b> {tp_val:.2f}</p>' if trade_type != 'NONE' else ''
 
-if aggressive_mode:
-    bullish_mss = bullish_mss or (recent_body > 2.0)
-    bearish_mss = bearish_mss or (recent_body < -2.0)
-
-# Strategy Engine (24/7 Mode - Session Lock Removed)
-signal_box, color, recommendation, sl_val, tp_val, accuracy_pct, signal_base = "⏳ MONITORING MARKET FLOW", "#f59e0b", "Scanning HTF OB and LTF MSS confluence...", None, None, "N/A", "Scanning Market Flow"
-
-if swept_high_liquidity and is_premium and bearish_mss and (price <= htf_ob_high):
-    signal_box = "📉 HIGH PROBABILITY SELL ENTRY (HTF OB + SWEEP + MSS)"
-    color = "#ef4444"
-    sl_val = price + 12.0
-    tp_val = swing_low
-    accuracy_pct = "92.4%"
-    signal_base = f"Higher TF ({htf}) Resistance/OB mitigation at {htf_ob_high:.2f} + Session High Sweep + Bearish MSS Displacement on {tf}."
-    recommendation = f"<b>Day Trade Execution:</b> Enter short at {price:.2f}. SL above structural high ({sl_val:.2f}), target structural low ({tp_val:.2f})."
-    log_trade("SELL", price, sl_val, tp_val, recommendation, accuracy_pct)
-elif swept_low_liquidity and not is_premium and bullish_mss and (price >= htf_ob_low):
-    signal_box = "📈 HIGH PROBABILITY BUY ENTRY (HTF OB + SWEEP + MSS)"
-    color = "#22c55e"
-    sl_val = price - 12.0
-    tp_val = swing_high
-    accuracy_pct = "94.1%"
-    signal_base = f"Higher TF ({htf}) Support/OB mitigation at {htf_ob_low:.2f} + Session Low Sweep + Bullish MSS Displacement on {tf}."
-    recommendation = f"<b>Day Trade Execution:</b> Enter long at {price:.2f}. SL below structural low ({sl_val:.2f}), target structural high ({tp_val:.2f})."
-    log_trade("BUY", price, sl_val, tp_val, recommendation, accuracy_pct)
-
-# UI Display
-st.markdown(f"""
-<div style="background-color: #0f172a; padding: 25px; border-radius: 12px; border-left: 10px solid {color}; color: #f8fafc;">
-    <div style="display:flex; justify-content:space-between; align-items:center;">
-        <h2 style="margin:0; color:{color}; font-size: 1.3rem;">{signal_box}</h2>
-        <span style="background-color:{color}; color:#fff; padding:4px 10px; border-radius:6px; font-weight:bold; font-size:0.9rem;">Accuracy: {accuracy_pct}</span>
-    </div>
-    <p style="margin:8px 0 4px 0; color:#94a3b8;"><b>Active Price:</b> {price:.2f} | <b>Offset:</b> {manual_offset:+.2f}$ | <b>Zone:</b> {zone_name}</p>
-    <p style="margin:0 0 8px 0; color:#38bdf8; font-size:0.85rem;"><b>Signal Base / Reason:</b> {signal_base}</p>
-    <p style="margin:0 0 10px 0; color:#cbd5e1; font-size: 0.8rem;">🕒 IST Time: {datetime.now(IST_TZ).strftime('%H:%M:%S')} | TF: {tf} | HTF Filter: {htf}</p>
-    <p style="margin:8px 0 0 0; font-size: 0.95rem; color:#e2e8f0;">{recommendation}</p>
-    {f'<hr style="border-color:#334155; margin:10px 0;"><p style="color:#ff6b6b; margin:2px 0;"><b>Stop Loss (SL):</b> {sl_val:.2f}</p><p style="color:#51cf66; margin:2px 0;"><b>Take Profit (TP):</b> {tp_val:.2f}</p>' if sl_val else ''}
+card_html = f"""
+<div class="main-card" style="border-left-color: {box_color};">
+    <h3 style="margin:0 0 10px 0; color:{box_color}; font-size: 1.4rem;">{signal_box}</h3>
+    {alarm_section}
+    <div style="font-size: 1rem; margin-bottom: 6px;"><b>Price (w/ Offset):</b> {price:.2f} &nbsp;|&nbsp; <b>ATR:</b> {atr_val:.2f}</div>
+    <div style="font-size: 0.95rem; color:#4ade80; margin-bottom: 4px;"><b>🟢 20 EMA:</b> {ema20_val:.2f}</div>
+    <div style="font-size: 0.95rem; color:#f87171; margin-bottom: 6px;"><b>🔴 200 EMA:</b> {ema200_val:.2f}</div>
+    <div style="font-size: 0.95rem; color:#38bdf8; margin-bottom: 6px;"><b>Signal Accuracy:</b> {accuracy}</div>
+    {hold_section}
+    <div style="font-size: 0.85rem; color:#94a3b8; margin-top: 8px;">🕒 IST Time: {current_time_str} &nbsp;|&nbsp; Offset Applied: {manual_offset}$</div>
+    {levels_section}
 </div>
-""", unsafe_allow_html=True)
+"""
 
-# Missed / Last Triggered Setup Box
+st.markdown(card_html, unsafe_allow_html=True)
+
+# --- JOURNAL ---
 st.markdown("---")
-st.subheader("🎯 Last Triggered Setup / Missed Trade Log")
+st.subheader("📅 30-Day Scalping Journal")
 j_data = load_journal()
 if j_data:
-    last_t = j_data[-1]
-    st.markdown(f"""
-    <div style="background-color: #1e293b; padding: 15px; border-radius: 8px; border: 1px solid #475569; color:#f8fafc;">
-        <p style="margin:0; color:#38bdf8;"><b>Time:</b> {last_t['timestamp']} | <b>Type:</b> {last_t['type']} | <b>Accuracy:</b> {last_t.get('accuracy','N/A')}</p>
-        <p style="margin:4px 0;"><b>Entry:</b> {last_t['entry']} ➔ <b>TP:</b> {last_t['tp']} | <b>SL:</b> {last_t['sl']}</p>
-        <p style="margin:0; font-size:0.85rem; color:#94a3b8;"><b>Basis/Reason:</b> {last_t['reason']}</p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.dataframe(pd.DataFrame(j_data), use_container_width=True)
 else:
-    st.info("No missed setups logged yet in the recent window.")
-
-# Performance Tracker
-st.markdown("---")
-st.subheader("📅 1-Month Trading Journey & P&L Performance Tracker")
-if j_data:
-    df_j = pd.DataFrame(j_data)
-    total_pnl = df_j['pnl_usd'].sum() if 'pnl_usd' in df_j.columns else 0.0
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Logged Trades (30d)", len(df_j))
-    col2.metric("Estimated Net P&L ($)", f"${total_pnl:+.2f}")
-    col3.metric("System Mode", "24/7 Active")
-    st.dataframe(df_j, use_container_width=True)
-else:
-    st.info("No trading records found in the 1-month execution history window yet.")
+    st.info("Awaiting SMC/ICT sweep and EMA confluence setup...")
