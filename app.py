@@ -9,45 +9,6 @@ import json
 # --- APP CONFIG & VERSION v10.2 ---
 st.set_page_config(page_title="XAUUSD SMC/ICT Master Engine v10.2", layout="centered")
 
-# --- ORIGINAL CLEAN DARK THEME & CARD CSS ---
-st.markdown("""
-<style>
-    .stApp {
-        background-color: #0b0f19;
-        color: #f8fafc;
-    }
-    .main-card {
-        background-color: #0f172a;
-        padding: 24px;
-        border-radius: 14px;
-        border-left: 8px solid #f59e0b;
-        color: #f8fafc;
-        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
-        margin-bottom: 20px;
-    }
-    .hold-box {
-        background-color: #1e293b;
-        padding: 12px;
-        border-radius: 8px;
-        color: #51cf66;
-        font-size: 0.95rem;
-        margin: 12px 0;
-        border: 1px solid #334155;
-    }
-    .alarm-box {
-        background-color: #7f1d1d;
-        padding: 12px;
-        border-radius: 8px;
-        color: #f87171;
-        font-size: 1rem;
-        margin: 12px 0;
-        border: 1px solid #ef4444;
-        text-align: center;
-        font-weight: bold;
-    }
-</style>
-""", unsafe_allow_html=True)
-
 st.title("🏛️ XAUUSD SMC/ICT Master Engine v10.2")
 
 JOURNAL_FILE = "smc_gmt4_journey_journal.json"
@@ -122,8 +83,7 @@ recent_max = float(data['High'].iloc[-5:-1].max()) + manual_offset
 recent_min = float(data['Low'].iloc[-5:-1].min()) + manual_offset
 
 # Confluence Evaluation (SMC/ICT Sweep + 30m+ EMA Rejection)
-signal_box = "⏳ v10.2: SCANNING SMC/ICT + 30m+ EMA REJECTION"
-box_color = "#f59e0b"
+signal_box = f"⏳ v10.2: SCANNING SMC/ICT + {tf} EMA REJECTION"
 trade_type = "NONE"
 hold_advice = ""
 alarm_msg = ""
@@ -136,7 +96,6 @@ smc_sell_sweep = price < recent_min
 
 if force_active or (ema_tap_valid and smc_buy_sweep and price > ema200_val):
     signal_box = f"🚨 v10.2 ALARM: SMC BUY SWEEP + 20 EMA BOUNCE [{tf}] (1:4 RR)"
-    box_color = "#22c55e"
     trade_type = "BUY"
     sl_val = price - (atr_val * 0.8)
     tp_val = price + (atr_val * 3.2) 
@@ -146,7 +105,6 @@ if force_active or (ema_tap_valid and smc_buy_sweep and price > ema200_val):
     log_trade("BUY", price, sl_val, tp_val, abs(price - sl_val), accuracy)
 elif force_active or (ema_tap_valid and smc_sell_sweep and price < ema200_val):
     signal_box = f"🚨 v10.2 ALARM: SMC SELL SWEEP + 20 EMA REJECTION [{tf}] (1:4 RR)"
-    box_color = "#ef4444"
     trade_type = "SELL"
     sl_val = price + (atr_val * 0.8)
     tp_val = price - (atr_val * 3.2) 
@@ -155,28 +113,38 @@ elif force_active or (ema_tap_valid and smc_sell_sweep and price < ema200_val):
     hold_advice = "💎 INSTITUTIONAL RIDE: Don't Exit! Hold & Target Full 1:4 Extension."
     log_trade("SELL", price, sl_val, tp_val, abs(price - sl_val), accuracy)
 
-# --- ORIGINAL SAFE HTML INSTITUTIONAL CARD UI ---
-current_time_str = datetime.now(IST_TZ).strftime('%H:%M:%S')
-
-alarm_section = f'<div class="alarm-box">{alarm_msg}</div>' if alarm_msg else ''
-hold_section = f'<div class="hold-box"><b>{hold_advice}</b></div>' if trade_type != 'NONE' else ''
-levels_section = f'<hr style="border-color:#334155; margin:14px 0;"><p style="color:#ff6b6b; margin:3px 0;"><b>Stop Loss (SL):</b> {sl_val:.2f}</p><p style="color:#51cf66; margin:3px 0;"><b>Take Profit (TP 1:4 Target):</b> {tp_val:.2f}</p>' if trade_type != 'NONE' else ''
-
-card_html = f"""
-<div class="main-card" style="border-left-color: {box_color};">
-    <h3 style="margin:0 0 10px 0; color:{box_color}; font-size: 1.4rem;">{signal_box}</h3>
-    {alarm_section}
-    <div style="font-size: 1rem; margin-bottom: 6px;"><b>Price (w/ Offset):</b> {price:.2f} &nbsp;|&nbsp; <b>ATR:</b> {atr_val:.2f}</div>
-    <div style="font-size: 0.95rem; color:#4ade80; margin-bottom: 4px;"><b>🟢 20 EMA ({tf}):</b> {ema20_val:.2f}</div>
-    <div style="font-size: 0.95rem; color:#f87171; margin-bottom: 6px;"><b>🔴 200 EMA ({tf}):</b> {ema200_val:.2f}</div>
-    <div style="font-size: 0.95rem; color:#38bdf8; margin-bottom: 6px;"><b>Signal Accuracy:</b> {accuracy}</div>
-    {hold_section}
-    <div style="font-size: 0.85rem; color:#94a3b8; margin-top: 8px;">🕒 IST Time: {current_time_str} &nbsp;|&nbsp; Offset Applied: {manual_offset}$ &nbsp;|&nbsp; TF: {tf}</div>
-    {levels_section}
-</div>
-"""
-
-st.markdown(card_html, unsafe_allow_html=True)
+# --- NATIVE STREAMLIT DASHBOARD CONTAINER (Zero Leakage) ---
+with st.container():
+    if trade_type == "BUY":
+        st.success(signal_box)
+    elif trade_type == "SELL":
+        st.error(signal_box)
+    else:
+        st.warning(signal_box)
+        
+    if alarm_msg:
+        st.error(alarm_msg)
+        
+    c1, c2 = st.columns(2)
+    with c1:
+        st.metric(label="Price (w/ Offset)", value=f"{price:.2f}")
+        st.metric(label="🟢 20 EMA (Green)", value=f"{ema20_val:.2f}")
+    with c2:
+        st.metric(label="ATR Volatility", value=f"{atr_val:.2f}")
+        st.metric(label="🔴 200 EMA (Red)", value=f"{ema200_val:.2f}")
+        
+    st.info(f"**Signal Accuracy:** {accuracy}")
+    
+    if trade_type != 'NONE':
+        st.info(hold_advice)
+        sc1, sc2 = st.columns(2)
+        with sc1:
+            st.error(f"**Stop Loss (SL):** {sl_val:.2f}")
+        with sc2:
+            st.success(f"**Take Profit (TP 1:4 Target):** {tp_val:.2f}")
+            
+    current_time_str = datetime.now(IST_TZ).strftime('%H:%M:%S')
+    st.caption(f"🕒 IST Time: {current_time_str} | Offset Applied: {manual_offset}$ | TF: {tf}")
 
 # --- JOURNAL ---
 st.markdown("---")
@@ -186,4 +154,3 @@ if j_data:
     st.dataframe(pd.DataFrame(j_data), use_container_width=True)
 else:
     st.info("Awaiting higher timeframe SMC/ICT + EMA rejection setup...")
-    
